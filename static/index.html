@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SNMP Traffic Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --series-in: #2a78d6;
+    --series-out: #eb6834;
+    --good: #0ca30c;
+    --good-text: #006300;
+    --critical: #d03b3b;
+    --warning: #fab219;
+    --track: #f0efec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --series-in: #3987e5;
+      --series-out: #d95926;
+      --good-text: #0ca30c;
+      --track: #383835;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-in: #3987e5;
+    --series-out: #d95926;
+    --good-text: #0ca30c;
+    --track: #383835;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans Thai", sans-serif;
+  }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  .sub { margin: 2px 0 0; color: var(--text-secondary); }
+  .live { display: inline-flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 13px; }
+  .live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+  .live.ok .dot { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent); }
+  .live.stale .dot { background: var(--warning); }
+  .live.down .dot { background: var(--critical); }
+
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-bottom: 16px; }
+  .filters label { display: inline-flex; align-items: center; gap: 8px; color: var(--text-secondary); }
+  select, input[type="number"] {
+    font: inherit; color: var(--text-primary); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+  }
+  input[type="number"] { width: 70px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .seg button {
+    font: inherit; color: var(--text-secondary); background: transparent; border: 0;
+    padding: 5px 12px; cursor: pointer;
+  }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button:hover { background: var(--track); }
+  .seg button[aria-pressed="true"] { color: var(--text-primary); font-weight: 600; background: var(--track); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+  .tile .label { color: var(--text-secondary); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .tile .key { width: 14px; height: 2px; border-radius: 1px; display: inline-block; }
+  .tile .value { font-size: 28px; font-weight: 600; margin-top: 4px; line-height: 1.2; }
+  .tile .unit { font-size: 14px; font-weight: 400; color: var(--text-secondary); margin-left: 4px; }
+  .tile .note { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+  .meter { height: 6px; background: var(--track); border-radius: 3px; margin-top: 10px; overflow: hidden; }
+  .meter > div { height: 100%; width: 0; background: var(--series-in); border-radius: 3px; transition: width .3s; }
+  .meter.over > div { background: var(--critical); }
+  .status { display: inline-flex; align-items: center; gap: 8px; }
+  .status .icon { width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; color: #fff; font-size: 13px; font-weight: 700; }
+  .status.up .icon { background: var(--good); }
+  .status.down .icon { background: var(--critical); }
+
+  .chart-card { margin-bottom: 16px; }
+  .card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+  h2 { font-size: 15px; margin: 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; color: var(--text-secondary); font-size: 13px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 16px; height: 2px; border-radius: 1px; display: inline-block; }
+  .legend i.dash { background: repeating-linear-gradient(90deg, var(--text-muted) 0 4px, transparent 4px 7px); }
+  .chart-wrap { position: relative; height: 320px; }
+  .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-muted); }
+
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 16px; }
+  .alerts { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow: auto; }
+  .alerts li { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--grid); }
+  .alerts li:first-child { border-top: 0; }
+  .alerts .badge { flex: none; font-size: 11px; font-weight: 700; color: #fff; background: var(--critical); border-radius: 4px; padding: 2px 6px; height: fit-content; }
+  .alerts .badge.ongoing { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--critical); }
+  .alerts .what { color: var(--text-primary); }
+  .when { color: var(--text-muted); font-size: 12px; }
+  .ok-msg { color: var(--good-text); }
+
+  .table-wrap { max-height: 360px; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+  th, td { padding: 6px 8px; text-align: right; white-space: nowrap; border-top: 1px solid var(--grid); }
+  th { position: sticky; top: 0; background: var(--surface); color: var(--text-secondary); font-weight: 600; border-top: 0; }
+  th:first-child, td:first-child { text-align: left; }
+  td.hot { color: var(--critical); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>SNMP Traffic Monitor</h1>
+      <p class="sub" id="subtitle">Cisco Router → collector.py → Kafka → dashboard</p>
+    </div>
+    <span class="live" id="live" role="status"><span class="dot"></span><span id="liveText">กำลังเชื่อมต่อ…</span></span>
+  </header>
+
+  <div class="filters">
+    <label>อินเทอร์เฟซ <select id="ifSelect"></select></label>
+    <div class="seg" role="group" aria-label="ช่วงเวลา" id="range">
+      <button type="button" data-sec="300">5 นาที</button>
+      <button type="button" data-sec="900">15 นาที</button>
+      <button type="button" data-sec="3600">1 ชั่วโมง</button>
+    </div>
+    <label>แจ้งเตือนเมื่อ utilization ≥ <input id="threshold" type="number" min="0" max="100" step="1"> %</label>
+  </div>
+
+  <section class="tiles">
+    <div class="card tile">
+      <div class="label"><i class="key" style="background:var(--series-in)"></i>ขาเข้า (In)</div>
+      <div class="value"><span id="tIn">–</span><span class="unit">Mbps</span></div>
+      <div class="note" id="tInPk">–</div>
+    </div>
+    <div class="card tile">
+      <div class="label"><i class="key" style="background:var(--series-out)"></i>ขาออก (Out)</div>
+      <div class="value"><span id="tOut">–</span><span class="unit">Mbps</span></div>
+      <div class="note" id="tOutPk">–</div>
+    </div>
+    <div class="card tile">
+      <div class="label">Utilization</div>
+      <div class="value"><span id="tUtil">–</span><span class="unit">%</span></div>
+      <div class="meter" id="meter"><div></div></div>
+      <div class="note" id="tSpeed">–</div>
+    </div>
+    <div class="card tile">
+      <div class="label">สถานะอินเทอร์เฟซ</div>
+      <div class="value"><span class="status" id="tStatus">–</span></div>
+      <div class="note" id="tUpdated">–</div>
+    </div>
+    <div class="card tile">
+      <div class="label">Errors (in / out)</div>
+      <div class="value" id="tErr">–</div>
+      <div class="note">ค่าสะสมตั้งแต่เราเตอร์เปิดเครื่อง</div>
+    </div>
+  </section>
+
+  <section class="card chart-card">
+    <div class="card-head">
+      <h2>ทราฟฟิก (Mbps)</h2>
+      <div class="legend">
+        <span><i style="background:var(--series-in)"></i>ขาเข้า (In)</span>
+        <span><i style="background:var(--series-out)"></i>ขาออก (Out)</span>
+        <span><i class="dash"></i>เกณฑ์แจ้งเตือน</span>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="chart" aria-label="กราฟทราฟฟิกขาเข้าและขาออก" role="img"></canvas>
+      <div class="empty" id="empty">รอข้อมูลจาก Kafka…</div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <div class="card-head"><h2>การแจ้งเตือน</h2><span class="when" id="alertCount"></span></div>
+      <ul class="alerts" id="alerts"></ul>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>ข้อมูลล่าสุด</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>เวลา</th><th>In Mbps</th><th>Out Mbps</th><th>Util %</th><th>In pkts</th><th>Out pkts</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const state = {
+  series: {},        // key -> [record, ...] เรียงตามเวลา
+  key: null,
+  rangeSec: 900,
+  threshold: 80,
+  lastMessageAt: 0,
+};
+
+const $ = (id) => document.getElementById(id);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* ไม่มี storage ก็ใช้ได้ */ } },
+};
+
+const toMbps = (bps) => (bps == null ? null : bps / 1e6);
+const fmt = (v, d = 2) => (v == null ? "–" : v.toFixed(d));
+const timeOf = (r) => new Date(r.timestamp);
+const hhmmss = (d) => d.toLocaleTimeString("th-TH", { hour12: false });
+
+function utilization(r) {
+  const rates = [r.in_bps, r.out_bps].filter((x) => x != null);
+  if (!r.speed_mbps || !rates.length) return null;
+  return (Math.max(...rates) / (r.speed_mbps * 1e6)) * 100;
+}
+
+function shortIf(name) {
+  for (const [full, s] of [["FastEthernet", "Fa"], ["GigabitEthernet", "Gi"], ["Ethernet", "Et"]]) {
+    if (name && name.startsWith(full)) return s + name.slice(full.length);
+  }
+  return name || "?";
+}
+
+// ---------- กราฟ ----------
+const crosshair = {
+  id: "crosshair",
+  afterDraw(chart) {
+    const active = chart.tooltip && chart.tooltip.getActiveElements();
+    if (!active || !active.length) return;
+    const x = active[0].element.x;
+    const { top, bottom } = chart.chartArea;
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.strokeStyle = css("--axis");
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, bottom);
+    ctx.stroke();
+    ctx.restore();
+  },
+};
+
+// ป้ายชื่อที่ปลายเส้น (ใช้สีตัวอักษร ไม่ใช้สีเส้น)
+const endLabels = {
+  id: "endLabels",
+  afterDatasetsDraw(chart) {
+    const ctx = chart.ctx;
+    const placed = [];
+    ctx.save();
+    ctx.font = "12px system-ui, -apple-system, 'Segoe UI', sans-serif";
+    ctx.fillStyle = css("--text-secondary");
+    ctx.textBaseline = "middle";
+    chart.data.datasets.forEach((ds, i) => {
+      if (!ds.endLabel) return;
+      const meta = chart.getDatasetMeta(i);
+      const last = meta.data[meta.data.length - 1];
+      const value = ds.data[ds.data.length - 1];
+      if (!last || value == null) return;
+      let y = last.y;
+      for (const py of placed) if (Math.abs(py - y) < 14) y = py + (y >= py ? 14 : -14);
+      placed.push(y);
+      const text = `${ds.endLabel} ${value.toFixed(2)}`;
+      const w = ctx.measureText(text).width;
+      ctx.fillText(text, Math.min(last.x + 6, chart.width - w - 2), y);
+    });
+    ctx.restore();
+  },
+};
+
+let chart = null;
+
+function makeChart() {
+  chart = new Chart($("chart"), {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: [
+        { label: "ขาเข้า (In)", endLabel: "In", data: [], borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0 },
+        { label: "ขาออก (Out)", endLabel: "Out", data: [], borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0 },
+        { label: "เกณฑ์แจ้งเตือน", data: [], borderWidth: 1, borderDash: [4, 3], pointRadius: 0, pointHoverRadius: 0 },
+      ],
+    },
+    options: {
+      animation: false,
+      maintainAspectRatio: false,
+      layout: { padding: { right: 64 } },
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          displayColors: true,
+          boxWidth: 14,
+          boxHeight: 2,
+          padding: 10,
+          filter: (item) => item.datasetIndex !== 2,
+          callbacks: {
+            label: (c) => ` ${c.parsed.y.toFixed(2)} Mbps  ${c.dataset.label}`,
+          },
+        },
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, maxRotation: 0 }, grid: { display: false }, border: { color: "#c3c2b7" } },
+        y: { beginAtZero: true, ticks: { maxTicksLimit: 6 }, grid: {}, border: { display: false },
+             title: { display: true, text: "Mbps" } },
+      },
+    },
+    plugins: [crosshair, endLabels],
+  });
+  applyTheme();
+}
+
+function applyTheme() {
+  if (!chart) return;
+  const [cin, cout, muted] = [css("--series-in"), css("--series-out"), css("--text-muted")];
+  const ds = chart.data.datasets;
+  ds[0].borderColor = ds[0].backgroundColor = cin;
+  ds[1].borderColor = ds[1].backgroundColor = cout;
+  ds[2].borderColor = ds[2].backgroundColor = muted;
+  ds.forEach((d) => (d.pointHoverBorderColor = css("--surface")));
+  const { x, y } = chart.options.scales;
+  x.ticks.color = y.ticks.color = y.title.color = muted;
+  y.grid.color = css("--grid");
+  x.border.color = css("--axis");
+  const tt = chart.options.plugins.tooltip;
+  tt.backgroundColor = css("--surface");
+  tt.titleColor = css("--text-secondary");
+  tt.bodyColor = css("--text-primary");
+  tt.borderColor = css("--border");
+  tt.borderWidth = 1;
+  chart.update();
+}
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+
+// ---------- การแจ้งเตือน: รวมรอบที่ต่อเนื่องเป็นเหตุการณ์เดียว ----------
+function alertEpisodes(records) {
+  const episodes = [];
+  const open = {};
+  let prevErr = null;
+  records.forEach((r, i) => {
+    const util = utilization(r);
+    const errs = [r.in_errors || 0, r.out_errors || 0];
+    const active = {
+      "HIGH-UTIL": util != null && util >= state.threshold,
+      "IF-DOWN": r.oper_status !== "up",
+      "NEW-ERR": prevErr != null && (errs[0] > prevErr[0] || errs[1] > prevErr[1]),
+    };
+    prevErr = errs;
+    for (const [type, on] of Object.entries(active)) {
+      if (on) {
+        if (!open[type]) open[type] = { type, start: timeOf(r), end: timeOf(r), peak: util, lastIndex: i };
+        const e = open[type];
+        e.end = timeOf(r);
+        e.lastIndex = i;
+        if (util != null && (e.peak == null || util > e.peak)) e.peak = util;
+      } else if (open[type]) {
+        episodes.push(open[type]);
+        delete open[type];
+      }
+    }
+  });
+  for (const e of Object.values(open)) {
+    e.ongoing = e.lastIndex === records.length - 1;
+    episodes.push(e);
+  }
+  return episodes.sort((a, b) => b.end - a.end);
+}
+
+const ALERT_TEXT = {
+  "HIGH-UTIL": (e) => `Utilization สูงสุด ${fmt(e.peak)}% (เกณฑ์ ${state.threshold}%)`,
+  "IF-DOWN": () => "อินเทอร์เฟซ down",
+  "NEW-ERR": () => "มี error เพิ่มขึ้น",
+};
+
+// ---------- วาดหน้าจอ ----------
+function visibleRecords() {
+  const all = (state.series[state.key] || []).filter((r) => r.in_bps != null || r.out_bps != null);
+  if (!all.length) return [];
+  const latest = timeOf(all[all.length - 1]).getTime();
+  return all.filter((r) => timeOf(r).getTime() >= latest - state.rangeSec * 1000);
+}
+
+function render() {
+  const records = visibleRecords();
+  const latest = records[records.length - 1];
+  $("empty").style.display = records.length ? "none" : "grid";
+
+  // tiles
+  if (latest) {
+    const util = utilization(latest);
+    $("tIn").textContent = fmt(toMbps(latest.in_bps));
+    $("tOut").textContent = fmt(toMbps(latest.out_bps));
+    $("tInPk").textContent = `${latest.in_pkts_delta ?? "–"} แพ็กเก็ตในรอบล่าสุด`;
+    $("tOutPk").textContent = `${latest.out_pkts_delta ?? "–"} แพ็กเก็ตในรอบล่าสุด`;
+    $("tUtil").textContent = fmt(util);
+    $("meter").firstElementChild.style.width = `${Math.min(100, util || 0)}%`;
+    $("meter").classList.toggle("over", util != null && util >= state.threshold);
+    $("tSpeed").textContent = `ความเร็วลิงก์ ${latest.speed_mbps ?? "–"} Mbps`;
+    const up = latest.oper_status === "up";
+    const st = $("tStatus");
+    st.className = `status ${up ? "up" : "down"}`;
+    st.replaceChildren();
+    const icon = document.createElement("span");
+    icon.className = "icon";
+    icon.textContent = up ? "✓" : "✕";
+    st.append(icon, document.createTextNode(up ? "UP" : "DOWN"));
+    $("tUpdated").textContent = `อัปเดต ${hhmmss(timeOf(latest))}`;
+    $("tErr").textContent = `${latest.in_errors ?? "–"} / ${latest.out_errors ?? "–"}`;
+  }
+
+  // chart
+  const speed = latest && latest.speed_mbps;
+  chart.data.labels = records.map((r) => hhmmss(timeOf(r)));
+  chart.data.datasets[0].data = records.map((r) => toMbps(r.in_bps));
+  chart.data.datasets[1].data = records.map((r) => toMbps(r.out_bps));
+  chart.data.datasets[2].data = speed ? records.map(() => (speed * state.threshold) / 100) : [];
+  chart.update();
+
+  // alerts
+  const list = $("alerts");
+  list.replaceChildren();
+  const episodes = alertEpisodes(records);
+  $("alertCount").textContent = episodes.length ? `${episodes.length} เหตุการณ์ในช่วงที่เลือก` : "";
+  if (!episodes.length) {
+    const li = document.createElement("li");
+    li.className = "ok-msg";
+    li.textContent = "✓ ไม่มีการแจ้งเตือนในช่วงเวลานี้";
+    list.append(li);
+  }
+  for (const e of episodes.slice(0, 30)) {
+    const li = document.createElement("li");
+    const badge = document.createElement("span");
+    badge.className = `badge${e.ongoing ? " ongoing" : ""}`;
+    badge.textContent = e.type;
+    const body = document.createElement("div");
+    const what = document.createElement("div");
+    what.className = "what";
+    what.textContent = ALERT_TEXT[e.type](e);
+    const when = document.createElement("div");
+    when.className = "when";
+    when.textContent = `${hhmmss(e.start)} – ${e.ongoing ? "ยังเกิดอยู่" : hhmmss(e.end)}`;
+    body.append(what, when);
+    li.append(badge, body);
+    list.append(li);
+  }
+
+  // table
+  const tbody = $("rows");
+  tbody.replaceChildren();
+  for (const r of records.slice(-30).reverse()) {
+    const util = utilization(r);
+    const tr = document.createElement("tr");
+    const cells = [hhmmss(timeOf(r)), fmt(toMbps(r.in_bps)), fmt(toMbps(r.out_bps)), fmt(util), r.in_pkts_delta ?? "–", r.out_pkts_delta ?? "–"];
+    cells.forEach((v, i) => {
+      const td = document.createElement("td");
+      td.textContent = v;
+      if (i === 3 && util != null && util >= state.threshold) td.className = "hot";
+      tr.append(td);
+    });
+    tbody.append(tr);
+  }
+}
+
+function refreshSelect() {
+  const sel = $("ifSelect");
+  const keys = Object.keys(state.series).sort();
+  if (!state.key || !keys.includes(state.key)) state.key = keys[0] || null;
+  if ([...sel.options].map((o) => o.value).join() === keys.join()) return;
+  sel.replaceChildren(...keys.map((k) => {
+    const [router, ...rest] = k.split(":");
+    const opt = document.createElement("option");
+    opt.value = k;
+    opt.textContent = `${router} · ${shortIf(rest.join(":"))}`;
+    return opt;
+  }));
+  sel.value = state.key || "";
+}
+
+function addRecord(key, record) {
+  const list = (state.series[key] ||= []);
+  const last = list[list.length - 1];
+  if (last && timeOf(record) <= timeOf(last)) return; // ซ้ำกับข้อมูลย้อนหลัง
+  list.push(record);
+  if (list.length > 2000) list.shift();
+}
+
+// ---------- สถานะการเชื่อมต่อ ----------
+function setLive(cls, text) {
+  $("live").className = `live ${cls}`;
+  $("liveText").textContent = text;
+}
+setInterval(() => {
+  if (!state.lastMessageAt) return;
+  const ago = Math.round((Date.now() - state.lastMessageAt) / 1000);
+  if (ago > 30) setLive("stale", `ไม่มีข้อมูลใหม่ ${ago} วินาที (collector ยังทำงานอยู่ไหม?)`);
+}, 5000);
+
+// ---------- เริ่มทำงาน ----------
+function initControls(config) {
+  const savedT = parseFloat(store.get("threshold"));
+  state.threshold = Number.isFinite(savedT) ? savedT : config.alert_util;
+  $("threshold").value = state.threshold;
+  $("threshold").addEventListener("change", (e) => {
+    const v = parseFloat(e.target.value);
+    if (!Number.isFinite(v)) return;
+    state.threshold = v;
+    store.set("threshold", String(v));
+    render();
+  });
+
+  const savedR = parseInt(store.get("rangeSec"), 10);
+  if (savedR) state.rangeSec = savedR;
+  const buttons = [...$("range").querySelectorAll("button")];
+  const mark = () => buttons.forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.sec === state.rangeSec)));
+  buttons.forEach((b) => b.addEventListener("click", () => {
+    state.rangeSec = +b.dataset.sec;
+    store.set("rangeSec", String(state.rangeSec));
+    mark();
+    render();
+  }));
+  mark();
+
+  $("ifSelect").addEventListener("change", (e) => { state.key = e.target.value; render(); });
+  $("subtitle").textContent = `Cisco Router → collector.py → Kafka topic "${config.topic}" → dashboard`;
+}
+
+async function start() {
+  makeChart();
+  const pending = [];
+  let ready = false;
+
+  const es = new EventSource("/api/stream");
+  es.onopen = () => setLive("ok", "เชื่อมต่อแบบเรียลไทม์");
+  es.onerror = () => setLive("down", "ขาดการเชื่อมต่อกับ dashboard.py (กำลังลองใหม่…)");
+  es.onmessage = (ev) => {
+    const { key, record } = JSON.parse(ev.data);
+    state.lastMessageAt = Date.now();
+    setLive("ok", "เชื่อมต่อแบบเรียลไทม์");
+    if (!ready) { pending.push([key, record]); return; }
+    addRecord(key, record);
+    refreshSelect();
+    render();
+  };
+
+  const res = await fetch("/api/history");
+  const { config, series } = await res.json();
+  initControls(config);
+  for (const [key, records] of Object.entries(series)) records.forEach((r) => addRecord(key, r));
+  pending.forEach(([k, r]) => addRecord(k, r));
+  ready = true;
+  refreshSelect();
+  render();
+}
+
+start().catch((err) => setLive("down", `โหลดข้อมูลไม่สำเร็จ: ${err.message}`));
+</script>
+</body>
+</html>
